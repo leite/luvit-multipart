@@ -4,3 +4,6 @@
 [submodule "examples/modules/kernel"]
 	path = examples/modules/kernel
 	url = git://github.com/luvit/kernel.git
+[submodule "examples/modules/static"]
+	path = examples/modules/static
+	url = git://github.com/dvv/luvit-static.git
