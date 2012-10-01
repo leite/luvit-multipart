@@ -134,7 +134,7 @@ return function (ops)
 	ops               = ops            and ops            or {}
 	tmp_path          = ops.tmp_path   and ops.tmp_path   or './tmp'
 	ops.endpoints     = ops.end_points and ops.end_points or {'POST .'}
-	exists(ops.tmp_path, function(err, _exists) errors = (err!=nil or not _exists) end)
+	exists(ops.tmp_path, function(err, _exists) errors = (err~=nil or not _exists) end)
   
   -- handler
   return function (req, res, nxt)
