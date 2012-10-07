@@ -22,6 +22,13 @@ local temp_path, finish_callback, coroutine, stream_handler, errors, headers, he
 
 fs, tb, st, co, math = nil, nil, nil, nil, nil
 
+local function detect(table, value)
+  local function _each_pairs(k, v)
+    if v==k then return true end
+  end
+  return each(table, _each_pairs)==true
+end
+
 -- parse mime/multipart headers
 local function get_headers(data)
 	local header, headers = match(data, "^"..m_boundary.."\n(.-%c)%c"), {}
@@ -45,6 +52,8 @@ local function finish_data_block()
 		-- close file handler
 		stream_handler.close(write_data_block)
 	else
+		resume(coroutine)
+	end
 end
 
 local function write_data_block(err) 
@@ -133,28 +142,34 @@ return function (ops)
 
 	ops               = ops            and ops            or {}
 	tmp_path          = ops.tmp_path   and ops.tmp_path   or './tmp'
-	ops.endpoints     = ops.end_points and ops.end_points or {'POST .'}
+	ops.methods       = ops.methods    and ops.methods    or {'POST'}
+	ops.endpoints     = ops.end_points and ops.end_points or {'.'}
 	exists(ops.tmp_path, function(err, _exists) errors = (err~=nil or not _exists) end)
   
   -- handler
   return function (req, res, nxt)
   	if not errors then
 
-  		local function on_stream_finish()
-				on_stream_arrival('', 0)
-				finish_callback = function()
-					if #queue==0 then
-						nxt()
-					else
-						stream = stream .. concat(queue)
-						queue  = {}
-						parse(stream)
+  		if detect(ops.methods, req.method) then
+	  		local function on_stream_finish()
+					on_stream_arrival('', 0)
+					finish_callback = function()
+						if #queue==0 then
+							nxt()
+						else
+							stream = stream .. concat(queue)
+							queue  = {}
+							parse(stream)
+						end
 					end
 				end
-			end
 
-	  	req:on('data', on_stream_arrival)
-	  	req:on('end',  on_stream_finish)
+		  	req:on('data', on_stream_arrival)
+		  	req:on('end',  on_stream_finish)
+	  	else
+	  		p('method not match')
+	  		nxt()
+	  	end
 		else
 			p('error ocurred')
 			nxt()
