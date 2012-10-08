@@ -13,6 +13,17 @@ native = nil
 local writer = function(path)
   -- Lua upvalues and helpers
   local file_handler, file_path = nil, path
+  -- on writing or openning error try to close and report first error
+  local function on_error_close(err, callback)
+    if file_handler then
+      close(file_handler, function(_err)
+        file_handler = nil
+        callback(err or _err)
+      end)
+    else
+      callback(err)
+    end
+  end
   -- asyncronous writer helper
   local function async_writer(file_data, offset, callback)
     local function _continue_writing(err, written)
@@ -28,17 +39,6 @@ local writer = function(path)
     end
     write(file_handler, offset, file_data, _continue_writing)
   end
-  -- on writing or openning error try to close and report first error
-  local function on_error_close(err, callback)
-    if file_handler then
-      close(file_handler, function(_err)
-        file_handler = nil
-        callback(err)
-      end)
-    else
-      callback(err)
-    end
-  end
 
   -- write and close
   return {
@@ -50,7 +50,8 @@ local writer = function(path)
       end,
     close = function(callback)
         if file_handler then
-          close(file_handler, callback)
+          p('closing ... ', type(callback))
+          on_error_close(nil, callback)
         end
       end,
     write = function(file_data, callback)
