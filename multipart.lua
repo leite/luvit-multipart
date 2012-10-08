@@ -54,7 +54,7 @@ local function write_data_block(err)
 		-- cannot write or close file ... permission?, disk failure?, wtf!
 		p('ERROR', err)
 	end
-	p('will resume ...')
+	--p('will resume ...')
 	resume(coroutine)
 end
 
@@ -63,7 +63,7 @@ local function finish_data_block()
 	p('closing ...', stream_handler.is_free())
 	if not stream_handler.is_free() then
 		-- close file handler
-		stream_handler.close(write_data_block, write_data_block)
+		stream_handler.close(write_data_block)
 		yield()
 	end
 end
@@ -166,7 +166,7 @@ return function (ops)
   			p('middleware in use')
 
 	  		local function on_stream_finish()
-	  			p('on stream finish', queue)
+	  			p('on stream finish', #queue)
 					on_stream_arrival('', 0)
 					finish_callback = function()
 						if #queue==0 then
