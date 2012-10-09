@@ -17,6 +17,7 @@ local writer = function(path)
   local function on_error_close(err, callback)
     if file_handler then
       close(file_handler, function(_err)
+        p('WRITER CLOSE')
         file_handler = nil
         callback(err or _err)
       end)
