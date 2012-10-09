@@ -15,11 +15,11 @@ local co     = require 'coroutine'
 local math   = require 'math'
 local writer = require './stream'
 
-local exists, create, status, yield, resume, format, match, gsub, sub, lower, insert, concat, each, random, seed, time = 
-				fs.exists, co.create, co.status, co.yield, co.resume, st.format, st.match, st.gsub, st.sub, st.lower, tb.insert, tb.concat, tb.foreach, math.random, math.randomseed, os.time
+local exists, create, status, yield, resume, find, format, match, gsub, sub, lower, insert, concat, each, random, seed, time = 
+				fs.exists, co.create, co.status, co.yield, co.resume, st.find, st.format, st.match, st.gsub, st.sub, st.lower, tb.insert, tb.concat, tb.foreach, math.random, math.randomseed, os.time
 
 local temp_path, finish_callback, coroutine, stream_handler, errors, headers, header, queue, stream, m_boundary, m_eos, line, last_line, i =
-				'', function() end, nil, nil, false, {}, {}, {}, '', '', '', '', '', 0
+				'', function() p('end of all thing') end, nil, nil, false, {}, {}, {}, '', '', '', '', '', 0
 
 fs, tb, st, os, co, math = nil, nil, nil, nil, nil, nil
 
@@ -68,22 +68,49 @@ local function finish_data_block()
 	end
 end
 
+local xx = 1
+
 -- parse body/multipart
 local function parse(data)
 
-	line = match(data, "(.-\n)")
+	
+	local _find_boundary = find(data, m_boundary) or 0
+	p(type(data), #data, type(_find_boundary), _find_boundary)
+	if _find_boundary>1 then
+		line = sub(data, 1, _find_boundary-1)
+		p(xx, 'boundary found', _find_boundary, #line, (#line<100 and line or nil))
+	else
+		p('find_new_line?')
+		local _find_new_line = find(data, "\n") or 0
+		p('found', _find_new_line)
+		if _find_new_line>1 and _find_boundary==1 then
+			line = sub(data, 1, _find_new_line)
+			p(xx, 'new line found', _find_new_line, #line, (#line<100 and line or nil))
+		else
+			line = #data>0 and data or line
+			p(xx, 'nothing found', (line~=nil and #line or line) )---#line, (#line<100 and line or nil))
+		end
+	end
 
-	if not line or line=='' then
+	if xx>300 then
+		--p(sub(data,1,20), find(data, "\r"), find(data, "\n"), find(data, m_boundary))
+		return true
+	end
+
+	--p(type(line))
+
+	if not line then --or line=='' then
 		p('line incompleted')
 		finish_callback()
 		return false
 	end
 
 	if line == m_boundary.."\n" or line == m_boundary.."\r\n" then
-		p('boundary reached')
+		p('boundary reached', _find_boundary)
 		finish_data_block()
 		insert(headers, header)
 		header, stream = get_headers(data)
+		xx = 1
 		if not header then
 			finish_callback()
 			return false
@@ -96,6 +123,7 @@ local function parse(data)
 		stream = ''
 		return false
 	else
+		--p('increment', sub(line, 1, 20))
 		if header.filename then
 			if stream_handler.is_free() then
 				stream_handler.new(unique_file_name(header.filename))
@@ -106,24 +134,27 @@ local function parse(data)
 			header.value = (last_line==m_boundary.."\r\n" or last_line==m_boundary.."\n" or last_line=='') and line or header.value.."\n"..line
 		end
 		stream = sub(data, #line+1)
+		p(#stream)
 	end
 	last_line = line
+	line = nil
+	xx = xx+1
 	parse(stream)
 end
 
 local function on_stream_arrival(chunk, length) 
 
 	if not coroutine then
-		p('on stream arrival -- coroutine absent', coroutine, #queue)
+		p('on stream arrival -- coroutine absent', coroutine, #chunk, #queue)
 		coroutine = create(parse)
 		stream    = chunk
 	elseif status(coroutine)=='dead' then
-		p('on stream arrival -- coroutine dead', status(coroutine), #queue)
+		p('on stream arrival -- coroutine dead', status(coroutine), #chunk, #queue)
 		coroutine = create(parse)
 		stream    = stream .. concat(queue) .. chunk
 		queue     = {}
 	else
-		p('on stream arrival -- queue stream', status(coroutine), #queue)
+		p('on stream arrival -- queue stream', status(coroutine), #chunk, #queue)
 		insert(queue, chunk)
 		return
 	end
@@ -145,6 +176,7 @@ local function on_stream_arrival(chunk, length)
 		stream_handler = writer('')	
 	end
 
+	p('main resume')
 	resume(coroutine, stream)
 end
 
@@ -171,10 +203,12 @@ return function (ops)
 					finish_callback = function()
 						if #queue==0 then
 							p('next route/middleware')
+							-- reset
+							coroutine, stream, last_line, m_boundary, m_eos = nil, '', '', '', ''
 							nxt()
 						else
 							stream = stream .. concat(queue)
-							p('finish him') --, #stream, sub(stream, 1, 60))
+							p('finish him', #stream)
 							queue  = {}
 							parse(stream)
 						end
