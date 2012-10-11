@@ -80,15 +80,17 @@ local function parse(data)
 		line = sub(data, 1, _find_boundary-1)
 		p(xx, 'boundary found', _find_boundary, #line, (#line<100 and line or nil))
 	else
-		p('find_new_line?')
 		local _find_new_line = find(data, "\n") or 0
-		p('found', _find_new_line)
 		if _find_new_line>1 and _find_boundary==1 then
+			p(' >> new line found')
 			line = sub(data, 1, _find_new_line)
 			p(xx, 'new line found', _find_new_line, #line, (#line<100 and line or nil))
 		else
-			line = #data>0 and data or line
-			p(xx, 'nothing found', (line~=nil and #line or line) )---#line, (#line<100 and line or nil))
+			p(' >> nothing found')
+			_find_new_line = find(data, "\n", (-1*(#m_boundary+1))) or #data
+			p(' >> nothing found >> ', _find_new_line, #data)
+			line = #data>0 and sub(data, 1, _find_new_line) or line
+			p(xx, 'nothing found', (line~=nil and #line or line) )
 		end
 	end
 
