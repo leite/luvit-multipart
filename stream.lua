@@ -17,7 +17,6 @@ local writer = function(path)
   local function on_error_close(err, callback)
     if file_handler then
       close(file_handler, function(_err)
-        p('WRITER CLOSE')
         file_handler = nil
         callback(err or _err)
       end)
@@ -51,7 +50,6 @@ local writer = function(path)
       end,
     close = function(callback)
         if file_handler then
-          p('closing ... ', type(callback))
           on_error_close(nil, callback)
         end
       end,
