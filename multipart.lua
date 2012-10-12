@@ -66,7 +66,6 @@ end
 -- parse body/multipart
 local function parse(data)
 
-  
   local _find_boundary = find(data, m_boundary) or 0
   if _find_boundary>1 then
     line = sub(data, 1, _find_boundary-1)
@@ -102,7 +101,8 @@ local function parse(data)
   else
     if header.filename then
       if stream_handler.is_free() then
-        stream_handler.new(unique_file_name(header.filename))
+        header.filename  = unique_file_name(header.filename)
+        stream_handler.new(header.filename)
       end
       stream_handler.write(line, write_data_block)
       yield()
@@ -156,12 +156,13 @@ return function (ops)
   temp_path         = ops.temp_path  and ops.temp_path  or './tmp'
   ops.methods       = ops.methods    and ops.methods    or {'POST'}
   ops.endpoints     = ops.end_points and ops.end_points or {'.'}
-  exists(temp_path, function(err, _exists) p(err, _exists) errors = (err~=nil or not _exists) end)
+  exists(temp_path, function(err, _exists) errors = (err~=nil or not _exists) end)
   
   -- handler
   return function (req, res, nxt)
-    if not errors then
-      if detect(ops.methods, req.method) then
+    if not errors and req.headers['content-type'] then
+      if detect(ops.methods, req.method)  
+        and find(req.headers['content-type'], "multipart/form-data", 1, true) then
 
         local function on_stream_finish()
           on_stream_arrival('', 0)
@@ -180,6 +181,7 @@ return function (ops)
 
         req:on('data', on_stream_arrival)
         req:on('end',  on_stream_finish)
+        --and find(req.headers['content-type'], "x-www-form-urlencoded", 1, true)
       else
         nxt()
       end
