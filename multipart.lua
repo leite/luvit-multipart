@@ -13,15 +13,16 @@ local st     = require 'string'
 local os     = require 'os'
 local co     = require 'coroutine'
 local math   = require 'math'
+local uv     = require 'uv'
 local writer = require './stream'
 
-local exists, create, status, yield, resume, find, format, match, gsub, sub, lower, insert, concat, each, random, seed, time = 
-        fs.exists, co.create, co.status, co.yield, co.resume, st.find, st.format, st.match, st.gsub, st.sub, st.lower, tb.insert, tb.concat, tb.foreach, math.random, math.randomseed, os.time
+local exists, create, status, yield, resume, find, format, match, gsub, sub, lower, insert, concat, each, random, seed, time, timer = 
+        fs.exists, co.create, co.status, co.yield, co.resume, st.find, st.format, st.match, st.gsub, st.sub, st.lower, tb.insert, tb.concat, tb.foreach, math.random, math.randomseed, os.time, uv.Timer
 
-local temp_path, finish_callback, coroutine, stream_handler, errors, headers, header, queue, stream, m_boundary, m_eos, line, last_line, i =
-        '', function() end, nil, nil, false, {}, {}, {}, '', '', '', '', '', 0
+local temp_path, finish_callback, coroutine, stream_handler, errors, suspended, headers, header, queue, stream, m_boundary, m_eos, line, i =
+        '', function() return true end, nil, nil, false, false, {}, {}, {}, '', '', '', '', 0
 
-fs, tb, st, os, co, math = nil, nil, nil, nil, nil, nil
+fs, tb, st, os, co, math, uv = nil, nil, nil, nil, nil, nil, nil
 
 local function detect(table, value)
   local function _each_pairs(k, v)
@@ -31,14 +32,15 @@ local function detect(table, value)
 end
 
 -- parse mime/multipart headers
-local function get_headers(data)
-  local header, headers = match(data, "^"..m_boundary.."\r?\n(.-\r?\n\r?\n)"), {}
+local function get_headers()
+  local header, headers = match(stream, "^"..m_boundary.."\r?\n(.-\r?\n\r?\n)"), {}
   local headers_loop    = function(k, v) headers[k] = v end
   if header then
     gsub(header, '%s?([^%:?%=?]+)%:?%s?%=?%"?([^%"?%;?%c?]+)%"?%;?%c?', headers_loop)
-    return headers, sub(data, #m_boundary+#header+3)
+    stream = sub(stream, #m_boundary+#header+3)
+    return headers
   end
-  return nil, data
+  return nil
 end
 
 --
@@ -64,56 +66,60 @@ local function finish_data_block()
 end
 
 -- parse body/multipart
-local function parse(data)
+local function parse()
 
-  local _find_boundary = find(data, m_boundary) or 0
-  if _find_boundary>1 then
-    line = sub(data, 1, _find_boundary-1)
-  else
-    local _find_new_line = find(data, "\n") or 0
-    if _find_new_line>1 and _find_boundary==1 then
-      line = sub(data, 1, _find_new_line)
+  local boundary_position, new_line_position = 0, 0
+
+  while true do
+
+    boundary_position = find(stream, m_boundary) or 0
+    if boundary_position>3 then
+      line = sub(stream, 1, boundary_position-3)
     else
-      _find_new_line = find(data, "\n", (-1*(#m_boundary+1))) or #data
-      line = #data>0 and sub(data, 1, _find_new_line) or line
-    end
-  end
-
-  if not line then
-    finish_callback()
-    return false
-  end
-
-  if line == m_boundary.."\n" or line == m_boundary.."\r\n" then
-    finish_data_block()
-    insert(headers, header)
-    header, stream = get_headers(data)
-    if not header then
-      finish_callback()
-      return false
-    end
-  elseif line == m_eos.."\n" or line == m_eos.."\r\n" then
-    finish_data_block()
-    insert(headers, header)
-    finish_callback()
-    stream = ''
-    return false
-  else
-    if header.filename then
-      if stream_handler.is_free() then
-        header.filename  = unique_file_name(header.filename)
-        stream_handler.new(header.filename)
+      new_line_position = find(stream, "\n") or 0
+      if new_line_position>1 and boundary_position==1 then
+        line = sub(stream, 1, new_line_position)
+      else
+        new_line_position = find(stream, "\n", (-1*(#m_boundary+1))) or #stream
+        line = #stream>0 and sub(stream, 1, new_line_position) or line
       end
-      stream_handler.write(line, write_data_block)
-      yield()
-    else
-      header.value = (last_line==m_boundary.."\r\n" or last_line==m_boundary.."\n" or last_line=='') and line or header.value.."\n"..line
     end
-    stream = sub(data, #line+1)
+
+    if not line then
+      if finish_callback() then 
+        suspended = true
+        yield()
+      end
+    elseif find(line, m_eos, 1, true) then
+      finish_data_block()
+      insert(headers, header)
+      stream = ''
+      if finish_callback() then break end
+    elseif boundary_position==1 then
+      finish_data_block()
+      insert(headers, header)
+      header = get_headers()
+      if not header then
+        if finish_callback() then
+          suspended = true
+          yield()
+        end
+      end
+    else
+      if header.filename then
+        if stream_handler.is_free() then
+          header.filename  = unique_file_name(header.filename)
+          stream_handler.new(header.filename)
+        end
+        stream_handler.write(line, write_data_block)
+        yield()
+      else
+        header.value = header.value==nil and line or header.value.."\n"..line
+      end
+      stream = sub(stream, #line+(boundary_position>2 and 3 or 1))
+    end
+    line = nil
   end
-  last_line = line
-  line      = nil
-  parse(stream)
 end
 
 local function on_stream_arrival(chunk, length) 
@@ -121,10 +127,10 @@ local function on_stream_arrival(chunk, length)
   if not coroutine then
     coroutine = create(parse)
     stream    = chunk
-  elseif status(coroutine)=='dead' then
-    coroutine = create(parse)
+  elseif suspended then
     stream    = stream .. concat(queue) .. chunk
     queue     = {}
+    suspended = false
   else
     insert(queue, chunk)
     return
@@ -138,7 +144,7 @@ local function on_stream_arrival(chunk, length)
       return
     end
     -- get headers
-    header, stream = get_headers(stream)
+    header = get_headers()
     if not header then
       return
     end      
@@ -146,7 +152,7 @@ local function on_stream_arrival(chunk, length)
     stream_handler = writer('')  
   end
 
-  resume(coroutine, stream)
+  resume(coroutine)
 end
 
 -- 
@@ -160,28 +166,32 @@ return function (ops)
   
   -- handler
   return function (req, res, nxt)
-    if not errors and req.headers['content-type'] then
-      if detect(ops.methods, req.method)  
-        and find(req.headers['content-type'], "multipart/form-data", 1, true) then
+    if not errors and req.headers['content-type'] and detect(ops.methods, req.method) then
+      if find(req.headers['content-type'], "multipart/form-data", 1, true) then
 
         local function on_stream_finish()
           on_stream_arrival('', 0)
           finish_callback = function()
             if #queue==0 then
               -- reset
-              coroutine, stream, last_line, m_boundary, m_eos = nil, '', '', '', ''
-              nxt()
+              p(headers)
+              suspended, stream, m_boundary, m_eos, headers = false, '', '', '', {}
+              req:emit('continue')
+              return true
             else
               stream = stream .. concat(queue)
               queue  = {}
-              parse(stream)
+              return false
             end
           end
         end
 
+        coroutine = nil
         req:on('data', on_stream_arrival)
         req:on('end',  on_stream_finish)
-        --and find(req.headers['content-type'], "x-www-form-urlencoded", 1, true)
+        req:on('continue', nxt)
+      elseif find(req.headers['content-type'], "x-www-form-urlencoded", 1, true) then
+        p('x-www-form-urlencoded found')
       else
         nxt()
       end
